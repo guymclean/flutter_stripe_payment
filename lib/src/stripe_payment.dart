@@ -61,7 +61,9 @@ class StripePayment {
       throw UnimplementedError();
     } else {
       if (Platform.isAndroid) {
-        return _channel.invokeMethod<bool>('canMakeAndroidPayPayments');
+        return _channel.invokeMethod<bool>('canMakeAndroidPayPayments', {
+          'networks': networks,
+        });
       } else if (Platform.isIOS) {
         return _channel.invokeMethod<bool>('canMakeApplePayPayments', {
           'networks': networks,

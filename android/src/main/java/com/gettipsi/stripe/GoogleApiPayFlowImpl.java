@@ -25,20 +25,14 @@ import com.gettipsi.stripe.util.Fun0;
 import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.identity.intents.model.UserAddress;
-import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wallet.AutoResolveHelper;
 import com.google.android.gms.wallet.CardInfo;
-import com.google.android.gms.wallet.CardRequirements;
 import com.google.android.gms.wallet.IsReadyToPayRequest;
 import com.google.android.gms.wallet.PaymentData;
 import com.google.android.gms.wallet.PaymentDataRequest;
 import com.google.android.gms.wallet.PaymentMethodToken;
-import com.google.android.gms.wallet.PaymentMethodTokenizationParameters;
 import com.google.android.gms.wallet.PaymentsClient;
-import com.google.android.gms.wallet.ShippingAddressRequirements;
-import com.google.android.gms.wallet.TransactionInfo;
 import com.google.android.gms.wallet.Wallet;
-import com.google.android.gms.wallet.WalletConstants;
 import com.stripe.android.ApiResultCallback;
 import com.stripe.android.BuildConfig;
 import com.stripe.android.Stripe;
@@ -47,10 +41,12 @@ import com.stripe.android.model.PaymentMethod;
 import com.stripe.android.model.PaymentMethodCreateParams;
 import com.stripe.android.model.Token;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import org.jetbrains.annotations.NotNull;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /** Created by ngoriachev on 13/03/2018. see https://developers.google.com/pay/api/tutorial */
 public final class GoogleApiPayFlowImpl extends PayFlow {
@@ -63,7 +59,8 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
   private Promise payPromise;
   private boolean paymentRequestCreatesPaymentMethod = false;
 
-  public GoogleApiPayFlowImpl(@NonNull Fun0<Activity> activityProvider, Fun0<Stripe> stripeProvider) {
+  public GoogleApiPayFlowImpl(
+      @NonNull Fun0<Activity> activityProvider, Fun0<Stripe> stripeProvider) {
     super(activityProvider);
 
     this.mStripe = stripeProvider;
@@ -74,43 +71,118 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
         activity, new Wallet.WalletOptions.Builder().setEnvironment(getEnvironment()).build());
   }
 
+  private static JSONObject getBaseRequest() throws JSONException {
+    return new JSONObject().put("apiVersion", 2).put("apiVersionMinor", 0);
+  }
+
+  private JSONObject getGatewayTokenizationSpecification() throws JSONException {
+    return new JSONObject() {
+      {
+        put("type", "PAYMENT_GATEWAY");
+        put(
+            "parameters",
+            new JSONObject() {
+              {
+                put("gateway", "stripe");
+                put("gatewayMerchantId", "exampleGatewayMerchantId");
+                put("stripe:publishableKey", getPublishableKey());
+                put("stripe:version", BuildConfig.VERSION_NAME);
+              }
+            });
+      }
+    };
+  }
+
+  private JSONArray getAllowedCardNetworks() {
+    return new JSONArray()
+        .put("AMEX")
+        .put("DISCOVER")
+        .put("INTERAC")
+        .put("JCB")
+        .put("MASTERCARD")
+        .put("VISA");
+  }
+
+  private JSONArray getAllowedCardAuthMethods() {
+    return new JSONArray().put("PAN_ONLY").put("CRYPTOGRAM_3DS");
+  }
+
+  private JSONObject getBaseCardPaymentMethod() throws JSONException {
+    JSONObject cardPaymentMethod = new JSONObject();
+    cardPaymentMethod.put("type", "CARD");
+
+    JSONObject parameters = new JSONObject();
+    parameters.put("allowedAuthMethods", getAllowedCardAuthMethods());
+    parameters.put("allowedCardNetworks", getAllowedCardNetworks());
+    // Optionally, you can add billing address/phone number associated with a CARD payment method.
+    parameters.put("allowPrepaidCards", true);
+    parameters.put("allowCreditCards", true);
+    parameters.put("billingAddressRequired", true);
+
+    JSONObject billingAddressParameters = new JSONObject();
+    billingAddressParameters.put("format", "FULL"); // MIN
+    billingAddressParameters.put("phoneNumberRequired", true); // MIN
+
+    parameters.put("billingAddressParameters", billingAddressParameters);
+
+    cardPaymentMethod.put("parameters", parameters);
+
+    return cardPaymentMethod;
+  }
+
+  private JSONObject getCardPaymentMethod() throws JSONException {
+    JSONObject cardPaymentMethod = getBaseCardPaymentMethod();
+    cardPaymentMethod.put("tokenizationSpecification", getGatewayTokenizationSpecification());
+
+    return cardPaymentMethod;
+  }
+
   private void isReadyToPay(
       @NonNull Activity activity,
       boolean isExistingPaymentMethodRequired,
-      @NonNull final Promise promise) {
+      @NonNull final Promise promise)
+      throws JSONException {
     ArgCheck.nonNull(activity);
     ArgCheck.nonNull(promise);
 
-    IsReadyToPayRequest request =
-        IsReadyToPayRequest.newBuilder()
-            .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_CARD)
-            .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_TOKENIZED_CARD)
-            .setExistingPaymentMethodRequired(isExistingPaymentMethodRequired)
-            .build();
+    JSONObject isReadyToPayRequest = getBaseRequest();
+    isReadyToPayRequest.put(
+        "allowedPaymentMethods", new JSONArray().put(getBaseCardPaymentMethod()));
+
+    IsReadyToPayRequest request = IsReadyToPayRequest.fromJson(isReadyToPayRequest.toString());
+
     mPaymentsClient = createPaymentsClient(activity);
-    Task<Boolean> task = mPaymentsClient.isReadyToPay(request);
-    task.addOnCompleteListener(
-        task1 -> {
-          try {
-            Boolean result = task1.getResult(ApiException.class);
-            promise.resolve(result);
-          } catch (ApiException exception) {
-            promise.reject(toErrorCode(exception), exception.getMessage());
-          }
-        });
+    mPaymentsClient
+        .isReadyToPay(request)
+        .addOnCompleteListener(
+            task -> {
+              try {
+                promise.resolve(task.getResult(ApiException.class));
+              } catch (ApiException exception) {
+                promise.reject(toErrorCode(exception), exception.getMessage());
+              }
+            });
   }
 
-  private PaymentMethodTokenizationParameters createPaymentMethodTokenizationParameters() {
-    return PaymentMethodTokenizationParameters.newBuilder()
-        .setPaymentMethodTokenizationType(
-            WalletConstants.PAYMENT_METHOD_TOKENIZATION_TYPE_PAYMENT_GATEWAY)
-        .addParameter("gateway", "stripe")
-        .addParameter("stripe:publishableKey", getPublishableKey())
-        .addParameter("stripe:version", BuildConfig.VERSION_NAME)
-        .build();
+  private static JSONObject getTransactionInfo(ReadableMap payParams) throws JSONException {
+    final String estimatedTotalPrice = payParams.getString(TOTAL_PRICE);
+    final String currencyCode = payParams.getString(CURRENCY_CODE);
+
+    JSONObject transactionInfo = new JSONObject();
+    transactionInfo.put("totalPrice", estimatedTotalPrice);
+    transactionInfo.put("totalPriceStatus", "FINAL");
+    transactionInfo.put("countryCode", "TODO");
+    transactionInfo.put("currencyCode", currencyCode);
+    transactionInfo.put("checkoutOption", "COMPLETE_IMMEDIATE_PURCHASE");
+
+    return transactionInfo;
   }
 
-  private PaymentDataRequest createPaymentDataRequest(ReadableMap payParams) {
+  private static JSONObject getMerchantInfo() throws JSONException {
+    return new JSONObject().put("merchantName", "Example Merchant");
+  }
+
+  private PaymentDataRequest createPaymentDataRequest(ReadableMap payParams) throws JSONException {
     final String estimatedTotalPrice = payParams.getString(TOTAL_PRICE);
     final String currencyCode = payParams.getString(CURRENCY_CODE);
     final boolean billingAddressRequired =
@@ -122,66 +194,77 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
     final boolean emailRequired = Converters.getValue(payParams, EMAIL_REQUIRED, false);
     final Collection<String> allowedCountryCodes = getAllowedShippingCountryCodes(payParams);
 
-    return createPaymentDataRequest(
-        estimatedTotalPrice,
-        currencyCode,
-        billingAddressRequired,
-        shippingAddressRequired,
-        phoneNumberRequired,
-        emailRequired,
-        allowedCountryCodes);
+    JSONObject paymentDataRequest = getBaseRequest();
+    paymentDataRequest.put("allowedPaymentMethods", new JSONArray().put(getCardPaymentMethod()));
+    paymentDataRequest.put("transactionInfo", getTransactionInfo(payParams));
+    paymentDataRequest.put("merchantInfo", getMerchantInfo());
+
+    /* An optional shipping address requirement is a top-level property of the PaymentDataRequest
+    JSON object. */
+    paymentDataRequest.put("shippingAddressRequired", true);
+
+    JSONObject shippingAddressParameters = new JSONObject();
+    shippingAddressParameters.put("phoneNumberRequired", false);
+
+    shippingAddressParameters.put("allowedCountryCodes", allowedCountryCodes);
+    paymentDataRequest.put("shippingAddressParameters", shippingAddressParameters);
+
+    return PaymentDataRequest.fromJson(paymentDataRequest.toString());
   }
 
-  private PaymentDataRequest createPaymentDataRequest(
-      @NonNull final String totalPrice,
-      @NonNull final String currencyCode,
-      final boolean billingAddressRequired,
-      final boolean shippingAddressRequired,
-      final boolean phoneNumberRequired,
-      final boolean emailRequired,
-      @NonNull final Collection<String> countryCodes) {
-
-    ArgCheck.isDouble(totalPrice);
-    ArgCheck.notEmptyString(currencyCode);
-
-    Log.d(TAG, "email required: " + emailRequired);
-
-    PaymentDataRequest.Builder builder = PaymentDataRequest.newBuilder();
-    builder.setTransactionInfo(
-        TransactionInfo.newBuilder()
-            .setTotalPriceStatus(WalletConstants.TOTAL_PRICE_STATUS_ESTIMATED)
-            .setTotalPrice(totalPrice)
-            .setCurrencyCode(currencyCode)
-            .build());
-
-    builder
-        .setCardRequirements(
-            CardRequirements.newBuilder()
-                .addAllowedCardNetworks(
-                    Arrays.asList(
-                        WalletConstants.CARD_NETWORK_AMEX,
-                        WalletConstants.CARD_NETWORK_DISCOVER,
-                        WalletConstants.CARD_NETWORK_JCB,
-                        WalletConstants.CARD_NETWORK_MASTERCARD,
-                        WalletConstants.CARD_NETWORK_VISA,
-                        WalletConstants.CARD_NETWORK_INTERAC,
-                        WalletConstants.CARD_NETWORK_OTHER))
-                .setBillingAddressRequired(billingAddressRequired)
-                .build())
-        .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_CARD)
-        .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_TOKENIZED_CARD)
-        .setEmailRequired(emailRequired)
-        .setShippingAddressRequired(shippingAddressRequired)
-        .setPhoneNumberRequired(phoneNumberRequired);
-
-    if (countryCodes.size() > 0) {
-      builder.setShippingAddressRequirements(
-          ShippingAddressRequirements.newBuilder().addAllowedCountryCodes(countryCodes).build());
-    }
-
-    builder.setPaymentMethodTokenizationParameters(createPaymentMethodTokenizationParameters());
-    return builder.build();
-  }
+  //  private PaymentDataRequest createPaymentDataRequest(
+  //      @NonNull final String totalPrice,
+  //      @NonNull final String currencyCode,
+  //      final boolean billingAddressRequired,
+  //      final boolean shippingAddressRequired,
+  //      final boolean phoneNumberRequired,
+  //      final boolean emailRequired,
+  //      @NonNull final Collection<String> countryCodes) {
+  //
+  //    ArgCheck.isDouble(totalPrice);
+  //    ArgCheck.notEmptyString(currencyCode);
+  //
+  //    Log.d(TAG, "email required: " + emailRequired);
+  //
+  //    PaymentDataRequest.Builder builder = PaymentDataRequest.newBuilder();
+  //    builder.setTransactionInfo(
+  //        TransactionInfo.newBuilder()
+  //            .setTotalPriceStatus(WalletConstants.TOTAL_PRICE_STATUS_ESTIMATED)
+  //            .setTotalPrice(totalPrice)
+  //            .setCurrencyCode(currencyCode)
+  //            .build());
+  //
+  //    builder
+  //        .setCardRequirements(
+  //            CardRequirements.newBuilder()
+  //                .addAllowedCardNetworks(
+  //                    Arrays.asList(
+  //                        WalletConstants.CARD_NETWORK_AMEX,
+  //                        WalletConstants.CARD_NETWORK_DISCOVER,
+  //                        WalletConstants.CARD_NETWORK_JCB,
+  //                        WalletConstants.CARD_NETWORK_MASTERCARD,
+  //                        WalletConstants.CARD_NETWORK_VISA,
+  //                        WalletConstants.CARD_NETWORK_INTERAC,
+  //                        WalletConstants.CARD_NETWORK_OTHER))
+  //                .setBillingAddressRequired(billingAddressRequired)
+  //                .build())
+  //        .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_CARD)
+  //        .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_TOKENIZED_CARD)
+  //        .setEmailRequired(emailRequired)
+  //        .setShippingAddressRequired(shippingAddressRequired)
+  //        .setPhoneNumberRequired(phoneNumberRequired);
+  //
+  //    if (countryCodes.size() > 0) {
+  //      builder.setShippingAddressRequirements(
+  //
+  // ShippingAddressRequirements.newBuilder().addAllowedCountryCodes(countryCodes).build());
+  //    }
+  //
+  //    //
+  //    //
+  // builder.setPaymentMethodTokenizationParameters(createPaymentMethodTokenizationParameters());
+  //    return builder.build();
+  //  }
 
   private void startPaymentRequest(
       @NonNull Activity activity, @NonNull PaymentDataRequest request) {
@@ -210,7 +293,11 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
     paymentRequestCreatesPaymentMethod = true;
 
     this.payPromise = promise;
-    startPaymentRequest(activity, createPaymentDataRequest(payParams));
+    try {
+      startPaymentRequest(activity, createPaymentDataRequest(payParams));
+    } catch (JSONException e) {
+      promise.reject(getErrorCode("jsonError"), getErrorDescription("jsonError"));
+    }
   }
 
   @Override
@@ -229,7 +316,11 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
     paymentRequestCreatesPaymentMethod = false;
 
     this.payPromise = promise;
-    startPaymentRequest(activity, createPaymentDataRequest(payParams));
+    try {
+      startPaymentRequest(activity, createPaymentDataRequest(payParams));
+    } catch (JSONException e) {
+      promise.reject(getErrorCode("jsonError"), getErrorDescription("jsonError"));
+    }
   }
 
   @Override
@@ -248,7 +339,11 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
       return;
     }
 
-    isReadyToPay(activity, isExistingPaymentMethodRequired, promise);
+    try {
+      isReadyToPay(activity, isExistingPaymentMethodRequired, promise);
+    } catch (JSONException e) {
+      promise.reject(getErrorCode("jsonError"), getErrorDescription("jsonError"));
+    }
   }
 
   public void potentiallyAvailableNativePayNetworks(@NonNull Promise promise) {
@@ -314,23 +409,26 @@ public final class GoogleApiPayFlowImpl extends PayFlow {
                           PaymentMethodCreateParams.Card.create(stripeToken.getId()),
                           billingDetails);
 
-                  mStripe.call() .createPaymentMethod(
-                      params,
-                      new ApiResultCallback<PaymentMethod>() {
-                        @Override
-                        public void onSuccess(PaymentMethod paymentMethod) {
-                          Log.d(TAG, "paymentMethod: " + paymentMethod.toString());
-                          payPromise.resolve(convertPaymentMethodToWritableMap(paymentMethod));
-                          payPromise = null;
-                        }
+                  mStripe
+                      .call()
+                      .createPaymentMethod(
+                          params,
+                          new ApiResultCallback<PaymentMethod>() {
+                            @Override
+                            public void onSuccess(PaymentMethod paymentMethod) {
+                              Log.d(TAG, "paymentMethod: " + paymentMethod.toString());
+                              payPromise.resolve(convertPaymentMethodToWritableMap(paymentMethod));
+                              payPromise = null;
+                            }
 
-                        @Override
-                        public void onError(@NotNull Exception e) {
-                          payPromise.reject(
-                              getErrorCode("parseResponse"), getErrorDescription("parseResponse"));
-                          payPromise = null;
-                        }
-                      });
+                            @Override
+                            public void onError(@NotNull Exception e) {
+                              payPromise.reject(
+                                  getErrorCode("parseResponse"),
+                                  getErrorDescription("parseResponse"));
+                              payPromise = null;
+                            }
+                          });
                   return true;
                 } else {
                   payPromise.reject(
