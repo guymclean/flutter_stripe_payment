@@ -3,9 +3,6 @@ description: A Flutter plugin to integrate the stripe libraries for iOS and Andr
 version: 1.0.9
 homepage: https://github.com/jonasbark/flutter_stripe_payment
 
-environment:
-  sdk: ">=2.13.0 <3.0.0"
-
 dependencies:
   json_annotation: ^4.1.0
   flutter:
@@ -29,3 +26,7 @@ dev_dependencies:
     sdk: flutter
   flutter_driver:
     sdk: flutter
+
+environment:
+  sdk: ">=2.12.0 <3.0.0"
+  flutter: ">=1.12.13+hotfix.5 <2.0.0"
