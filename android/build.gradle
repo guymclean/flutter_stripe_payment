@@ -3,14 +3,16 @@ group 'de.jonasbark.stripepayment'
 version '1.0'
 
 buildscript {
+    ext.kotlin_version = '1.5.10'
+
     repositories {
         google()
         jcenter()
     }
 
     dependencies {
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.4.10"
-        classpath 'com.android.tools.build:gradle:3.6.3'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.android.tools.build:gradle:4.2.1'
     }
 }
 
@@ -18,9 +20,6 @@ rootProject.allprojects {
     repositories {
         google()
         jcenter()
-        maven {
-            url "https://jitpack.io"
-        }
     }
 }
 
@@ -28,14 +27,14 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion 28
+    compileSdkVersion 31
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
     }
     defaultConfig {
         minSdkVersion 16
-        targetSdkVersion 28
+        targetSdkVersion 31
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -73,8 +72,8 @@ android {
 }
 
 dependencies {
-    api 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.4.20'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation 'androidx.annotation:annotation:1.1.0'
-    implementation 'com.stripe:stripe-android:16.1.1'
-    implementation 'com.google.android.gms:play-services-wallet:18.1.2'
+    implementation 'com.stripe:stripe-android:17.2.0'
+    implementation 'com.google.android.gms:play-services-wallet:18.1.3'
 }
