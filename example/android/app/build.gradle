@@ -16,7 +16,7 @@ apply plugin: 'kotlin-android'
 apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
-    compileSdkVersion 29
+    compileSdkVersion 31
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
@@ -30,7 +30,7 @@ android {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId "de.jonasbark.stripepaymentexample"
         minSdkVersion 21
-        targetSdkVersion 29
+        targetSdkVersion 31
         versionCode 1
         multiDexEnabled true
         versionName "1.0"
@@ -65,7 +65,7 @@ flutter {
 }
 
 dependencies {
-    api 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.4.20'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation 'androidx.annotation:annotation:1.1.0'
     def multidex_version = "2.0.1"
     implementation "androidx.multidex:multidex:$multidex_version"
